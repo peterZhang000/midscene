@@ -1,7 +1,14 @@
+# 环境变量文件 - 包含敏感信息，不要提交到 git
+.env.local
+.env.*.local
 
-# Midscene.js dump files
-midscene_run/dump
-midscene_run/report
-midscene_run/tmp
-midscene_run/log
-src/inject-tp.js
+# 构建输出
+dist/
+
+# 日志文件
+*.log
+npm-debug.log*
+
+# 临时文件
+*.tmp
+.DS_Store
