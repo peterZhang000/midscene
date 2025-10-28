@@ -1,4 +1,5 @@
 import { ExtensionBridgePageBrowserSide } from '@midscene/web/bridge-mode-browser';
+import { BridgeConfigManager } from './bridgeConfig';
 
 export type BridgeStatus =
   | 'listening'
@@ -48,20 +49,55 @@ export class BridgeConnector {
 
         let activeBridgePage: ExtensionBridgePageBrowserSide | null = null;
         try {
-          activeBridgePage = new ExtensionBridgePageBrowserSide(() => {
-            if (this.status !== 'closed') {
-              this.setStatus('disconnected');
-              this.activeBridgePage = null;
-            }
-          }, this.onMessage);
+          // Load configured port
+          const bridgePort = BridgeConfigManager.loadPort();
+          console.log(`🔧 Starting Bridge on port ${bridgePort}`);
+
+          activeBridgePage = new ExtensionBridgePageBrowserSide(
+            () => {
+              if (this.status !== 'closed') {
+                this.setStatus('disconnected');
+                this.activeBridgePage = null;
+              }
+            },
+            this.onMessage,
+            true, // forceSameTabNavigation
+            bridgePort, // Use configured port
+          );
 
           await activeBridgePage.connect();
           this.activeBridgePage = activeBridgePage;
           this.setStatus('connected');
+
+          // Log success with port info
+          this.onMessage(
+            `Bridge started successfully on port ${bridgePort}`,
+            'status',
+          );
         } catch (e) {
           this.activeBridgePage?.destroy();
           this.activeBridgePage = null;
-          console.warn('failed to setup connection', e);
+
+          // Enhanced error handling for port conflicts
+          const errorMessage = e instanceof Error ? e.message : String(e);
+
+          // Check for EADDRINUSE (port conflict)
+          if (
+            errorMessage.includes('EADDRINUSE') ||
+            errorMessage.includes('address already in use')
+          ) {
+            const currentPort = BridgeConfigManager.loadPort();
+            const suggestions =
+              BridgeConfigManager.suggestAlternativePorts(currentPort);
+
+            this.onMessage(
+              `❌ Port ${currentPort} is already in use. Try: ${suggestions.slice(0, 3).join(', ')}`,
+              'log',
+            );
+          } else {
+            console.warn('failed to setup connection', e);
+          }
+
           await new Promise((resolve) =>
             setTimeout(resolve, this.connectRetryInterval),
           );

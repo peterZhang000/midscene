@@ -3,8 +3,9 @@ import {
   ArrowDownOutlined,
   ClearOutlined,
   LoadingOutlined,
+  SettingOutlined,
 } from '@ant-design/icons';
-import { Button, List, Spin, Switch } from 'antd';
+import { Button, Input, List, Spin, Switch, Tooltip } from 'antd';
 import dayjs from 'dayjs';
 import { useEffect, useRef, useState } from 'react';
 import AutoConnectIcon from '../../icons/auto-connect.svg?react';
@@ -13,6 +14,7 @@ import {
   BridgeConnector,
   type BridgeStatus,
 } from '../../utils/bridgeConnector';
+import { BridgeConfigManager } from '../../utils/bridgeConfig';
 import {
   clearStoredBridgeMessages,
   getBridgeMsgsFromStorage,
@@ -41,6 +43,18 @@ export default function Bridge() {
     const saved = localStorage.getItem(AUTO_CONNECT_STORAGE_KEY);
     return saved === 'true';
   });
+
+  // Port configuration state
+  const [currentPort, setCurrentPort] = useState<number>(() =>
+    BridgeConfigManager.loadPort(),
+  );
+  const [portInputValue, setPortInputValue] = useState<string>(
+    currentPort.toString(),
+  );
+  const [portError, setPortError] = useState<string | null>(null);
+  const [portSaved, setPortSaved] = useState(false);
+  const [needsRestart, setNeedsRestart] = useState(false);
+
   const messageListRef = useRef<HTMLDivElement>(null);
   // useRef to track the ID of the connection status message
   const connectionStatusMessageId = useRef<string | null>(null);
@@ -166,6 +180,72 @@ export default function Bridge() {
     setAutoConnect(checked);
     localStorage.setItem(AUTO_CONNECT_STORAGE_KEY, String(checked));
   };
+
+  // Port configuration handlers
+  const handlePortChange = (value: string) => {
+    setPortInputValue(value);
+    setPortSaved(false);
+
+    // Clear error after user starts typing
+    if (portError) {
+      setPortError(null);
+    }
+
+    // Real-time validation
+    const port = parseInt(value, 10);
+    if (isNaN(port) || !BridgeConfigManager.validatePort(port)) {
+      const range = BridgeConfigManager.getPortRange();
+      setPortError(`Port must be between ${range.min} and ${range.max}`);
+    }
+  };
+
+  const handlePortSave = () => {
+    const port = parseInt(portInputValue, 10);
+
+    if (!BridgeConfigManager.validatePort(port)) {
+      setPortError('Invalid port number');
+      return;
+    }
+
+    try {
+      BridgeConfigManager.savePort(port);
+      setCurrentPort(port);
+      setPortSaved(true);
+      setPortError(null);
+
+      // Show restart message if Bridge is currently running
+      if (bridgeStatus === 'connected' || bridgeStatus === 'listening') {
+        setNeedsRestart(true);
+      }
+
+      // Auto-hide success message after 3 seconds
+      setTimeout(() => setPortSaved(false), 3000);
+    } catch (error) {
+      setPortError(
+        error instanceof Error ? error.message : 'Failed to save port',
+      );
+    }
+  };
+
+  const handlePortReset = () => {
+    BridgeConfigManager.resetToDefault();
+    const defaultPort = BridgeConfigManager.getDefaultPort();
+    setCurrentPort(defaultPort);
+    setPortInputValue(defaultPort.toString());
+    setPortError(null);
+    setPortSaved(false);
+
+    if (bridgeStatus === 'connected' || bridgeStatus === 'listening') {
+      setNeedsRestart(true);
+    }
+  };
+
+  // Clear restart flag when Bridge is stopped
+  useEffect(() => {
+    if (bridgeStatus === 'closed' || bridgeStatus === 'disconnected') {
+      setNeedsRestart(false);
+    }
+  }, [bridgeStatus]);
 
   // clear the message list
   const clearMessageList = () => {
@@ -318,6 +398,89 @@ export default function Bridge() {
                 More about bridge mode
               </a>
             </p>
+
+            {/* Port Configuration Section */}
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '12px',
+                backgroundColor: '#f5f5f5',
+                borderRadius: 4,
+              }}
+            >
+              <div
+                style={{
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>
+                  <SettingOutlined style={{ marginRight: 4 }} />
+                  Bridge Port Configuration
+                </span>
+                {bridgeStatus === 'connected' && (
+                  <span style={{ fontSize: 12, color: '#52c41a' }}>
+                    ● Active: {currentPort}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1 }}>
+                  <Input
+                    type="number"
+                    value={portInputValue}
+                    onChange={(e) => handlePortChange(e.target.value)}
+                    onBlur={handlePortSave}
+                    onPressEnter={handlePortSave}
+                    placeholder="3766"
+                    disabled={
+                      bridgeStatus === 'connected' ||
+                      bridgeStatus === 'listening'
+                    }
+                    status={portError ? 'error' : undefined}
+                    addonBefore="Port"
+                    style={{ width: '100%' }}
+                  />
+                  {portError && (
+                    <div style={{ fontSize: 12, color: '#ff4d4f', marginTop: 4 }}>
+                      {portError}
+                    </div>
+                  )}
+                  {portSaved && !portError && (
+                    <div style={{ fontSize: 12, color: '#52c41a', marginTop: 4 }}>
+                      ✓ Port saved successfully
+                    </div>
+                  )}
+                  {needsRestart && (
+                    <div style={{ fontSize: 12, color: '#fa8c16', marginTop: 4 }}>
+                      ⚠️ Restart Bridge to apply new port
+                    </div>
+                  )}
+                </div>
+
+                <Tooltip title="Reset to default (3766)">
+                  <Button
+                    size="small"
+                    onClick={handlePortReset}
+                    disabled={
+                      bridgeStatus === 'connected' ||
+                      bridgeStatus === 'listening'
+                    }
+                  >
+                    Reset
+                  </Button>
+                </Tooltip>
+              </div>
+
+              <div style={{ fontSize: 12, color: '#8c8c8c', marginTop: 8 }}>
+                💡 Tip: Use different ports (3766, 3767, 3768...) for multiple
+                Chrome Profiles on the same computer.
+              </div>
+            </div>
+
             {messageList.length > 0 && (
               <List
                 itemLayout="vertical"

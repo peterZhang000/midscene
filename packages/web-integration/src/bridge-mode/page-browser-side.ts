@@ -30,13 +30,14 @@ export class ExtensionBridgePageBrowserSide extends ChromeExtensionProxyPage {
       type: 'log' | 'status',
     ) => void = () => {},
     forceSameTabNavigation = true,
+    public bridgePort: number = DefaultBridgeServerPort,
   ) {
     super(forceSameTabNavigation);
   }
 
   private async setupBridgeClient() {
     this.bridgeClient = new BridgeClient(
-      `ws://localhost:${DefaultBridgeServerPort}`,
+      `ws://localhost:${this.bridgePort}`,
       async (method, args: any[]) => {
         console.log('bridge call from cli side', method, args);
         if (method === BridgeEvent.ConnectNewTabWithUrl) {
