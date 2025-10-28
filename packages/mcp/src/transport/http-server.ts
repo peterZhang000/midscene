@@ -43,7 +43,15 @@ export class MCPHttpServer {
         origin: this.config.cors.origin,
         credentials: this.config.cors.credentials,
         methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Accept', 'mcp-session-id', 'Authorization'],
+        allowedHeaders: [
+          'Content-Type', 
+          'Accept', 
+          'mcp-session-id', 
+          'Authorization',
+          'x-bridge-url',      // Remote Bridge WebSocket URL
+          'x-user-id',         // User identifier (for logging)
+          'x-session-id',      // Custom session identifier
+        ],
       })
     );
 
@@ -147,12 +155,28 @@ export class MCPHttpServer {
    */
   private async handleMCPRequest(req: Request, res: Response): Promise<void> {
     try {
+      // Extract custom headers for multi-user bridge support
+      const bridgeUrl = req.headers['x-bridge-url'] as string | undefined;
+      const userId = req.headers['x-user-id'] as string | undefined;
+      const customSessionId = req.headers['x-session-id'] as string | undefined;
+      
+      // Log bridge configuration if provided
+      if (bridgeUrl) {
+        console.error(`[MCP HTTP Server] X-Bridge-URL: ${bridgeUrl}`);
+        if (userId) {
+          console.error(`[MCP HTTP Server] X-User-ID: ${userId}`);
+        }
+        if (customSessionId) {
+          console.error(`[MCP HTTP Server] X-Session-ID: ${customSessionId}`);
+        }
+      }
+      
       // Extract or create session ID
       let sessionId = req.headers['mcp-session-id'] as string | undefined;
       
       if (!sessionId) {
         // Create new session
-        sessionId = this.generateSessionId();
+        sessionId = customSessionId || this.generateSessionId();
         const clientInfo = {
           ip: req.ip || req.socket.remoteAddress || 'unknown',
           userAgent: req.headers['user-agent'],
@@ -177,13 +201,13 @@ export class MCPHttpServer {
 
       // Handle GET request for SSE (Server-Sent Events)
       if (req.method === 'GET') {
-        await this.handleSSEConnection(req, res, sessionId);
+        await this.handleSSEConnection(req, res, sessionId, bridgeUrl);
         return;
       }
 
       // Handle POST request for JSON-RPC
       if (req.method === 'POST') {
-        await this.handleJSONRPCRequest(req, res, sessionId);
+        await this.handleJSONRPCRequest(req, res, sessionId, bridgeUrl);
         return;
       }
 
@@ -218,7 +242,8 @@ export class MCPHttpServer {
   private async handleSSEConnection(
     req: Request,
     res: Response,
-    sessionId: string
+    sessionId: string,
+    bridgeUrl?: string
   ): Promise<void> {
     // Set SSE headers
     res.writeHead(200, {
@@ -230,8 +255,8 @@ export class MCPHttpServer {
     // Send initial comment to establish connection
     res.write(': connected\n\n');
 
-    // Get or create MCP session
-    const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId);
+    // Get or create MCP session (with optional bridgeUrl)
+    const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId, bridgeUrl);
 
     // Listen for responses from the MCP server
     const responseHandler = (message: JSONRPCMessage) => {
@@ -257,7 +282,8 @@ export class MCPHttpServer {
   private async handleJSONRPCRequest(
     req: Request,
     res: Response,
-    sessionId: string
+    sessionId: string,
+    bridgeUrl?: string
   ): Promise<void> {
     const jsonRpcRequest: JSONRPCRequest = req.body;
 
@@ -273,8 +299,8 @@ export class MCPHttpServer {
     }
 
     try {
-      // Get or create MCP session
-      const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId);
+      // Get or create MCP session (with optional bridgeUrl)
+      const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId, bridgeUrl);
 
       // Process the request through the memory transport
       // This will emit 'message' to the MCP server and wait for the response

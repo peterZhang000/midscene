@@ -41,8 +41,10 @@ export class MCPSessionManager {
 
   /**
    * Get or create an MCP Server instance for a session
+   * @param sessionId - Unique session identifier
+   * @param bridgeUrl - Optional remote Bridge WebSocket URL (e.g., ws://192.168.1.100:3766)
    */
-  async getOrCreateSession(sessionId: string): Promise<MCPSessionInstance> {
+  async getOrCreateSession(sessionId: string, bridgeUrl?: string): Promise<MCPSessionInstance> {
     let session = this.sessions.get(sessionId);
 
     if (session) {
@@ -53,6 +55,11 @@ export class MCPSessionManager {
 
     // Create new MCP Server instance for this session
     console.error(`📦 Creating new MCP Server instance for session: ${sessionId}`);
+    if (bridgeUrl) {
+      console.error(`🌐 Session will use REMOTE bridge: ${bridgeUrl}`);
+    } else {
+      console.error(`🏠 Session will use LOCAL bridge (default)`);
+    }
 
     const server = new McpServer({
       name: '@midscene/mcp',
@@ -79,8 +86,8 @@ export class MCPSessionManager {
       },
     );
 
-    // Create Midscene manager for this session
-    const midsceneManager = new MidsceneManager(server);
+    // Create Midscene manager for this session (with optional bridgeUrl)
+    const midsceneManager = new MidsceneManager(server, { bridgeUrl });
 
     // Create memory transport for this session
     const transport = new MemoryTransport();

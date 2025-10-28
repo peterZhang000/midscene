@@ -19,28 +19,63 @@ interface ChromeExtensionPageCliSide extends ExtensionBridgePageBrowserSide {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Options for getting Bridge page
+ */
+export interface GetBridgePageOptions {
+  timeout?: number | false;
+  closeConflictServer?: boolean;
+  bridgeUrl?: string;  // Remote Bridge WebSocket URL
+  port?: number;       // Local Bridge port (for backward compatibility)
+}
+
 // actually, this is a proxy to the page in browser side
 export const getBridgePageInCliSide = (
-  timeout?: number | false,
-  closeConflictServer?: boolean,
+  options?: GetBridgePageOptions,
 ): ChromeExtensionPageCliSide => {
-  const server = new BridgeServer(
-    DefaultBridgeServerPort,
-    undefined,
-    undefined,
-    closeConflictServer,
-  );
-  server.listen({
-    timeout,
-  });
+  let server: BridgeServer;
+  let bridgeUrl: string;
+  let isRemoteMode = false;
+  
+  // Determine bridge mode and URL
+  if (options?.bridgeUrl) {
+    // Remote mode: use provided bridgeUrl
+    bridgeUrl = options.bridgeUrl;
+    isRemoteMode = true;
+    console.log(`🌐 [getBridgePageInCliSide] Using REMOTE bridge: ${bridgeUrl}`);
+    // In remote mode, we don't create a local BridgeServer
+    // The server variable will be created but not started
+  } else {
+    // Local mode: create local BridgeServer
+    const port = options?.port || DefaultBridgeServerPort;
+    bridgeUrl = `ws://localhost:${port}`;
+    console.log(`🏠 [getBridgePageInCliSide] Using LOCAL bridge: ${bridgeUrl}`);
+    
+    server = new BridgeServer(
+      port,
+      undefined,
+      undefined,
+      options?.closeConflictServer,
+    );
+    server.listen({
+      timeout: options?.timeout,
+    });
+  }
+  
   const bridgeCaller = (method: string) => {
     return async (...args: any[]) => {
+      if (!server) {
+        throw new Error('Bridge server not initialized');
+      }
       const response = await server.call(method, args);
       return response;
     };
   };
   const page = {
     showStatusMessage: async (message: string) => {
+      if (!server) {
+        throw new Error('Bridge server not initialized');
+      }
       await server.call(BridgeEvent.UpdateAgentStatus, [message]);
     },
   };
@@ -99,7 +134,10 @@ export const getBridgePageInCliSide = (
           } catch (e) {
             // console.error('error calling destroy', e);
           }
-          return server.close();
+          // Only close server in local mode
+          if (server) {
+            return server.close();
+          }
         };
       }
 
@@ -110,17 +148,44 @@ export const getBridgePageInCliSide = (
   return proxyPage;
 };
 
+/**
+ * Options for AgentOverChromeBridge constructor
+ */
+export interface ChromeBridgeOptions extends AgentOpt {
+  closeNewTabsAfterDisconnect?: boolean;
+  serverListeningTimeout?: number | false;
+  closeConflictServer?: boolean;
+  
+  /**
+   * Custom Bridge WebSocket URL for remote connection.
+   * If provided, AgentOverChromeBridge will connect to this URL
+   * instead of starting a local BridgeServer.
+   * 
+   * @example
+   * { bridgeUrl: 'ws://192.168.1.100:3766' }
+   */
+  bridgeUrl?: string;
+  
+  /**
+   * Port for local BridgeServer (ignored if bridgeUrl is provided).
+   * @deprecated Use bridgeUrl for remote connections
+   */
+  port?: number;
+}
+
 export class AgentOverChromeBridge extends Agent<ChromeExtensionPageCliSide> {
   private destroyAfterDisconnectFlag?: boolean;
 
-  constructor(
-    opts?: AgentOpt & {
-      closeNewTabsAfterDisconnect?: boolean;
-      serverListeningTimeout?: number | false;
-      closeConflictServer?: boolean;
-    },
-  ) {
-    const page = getBridgePageInCliSide(opts?.serverListeningTimeout);
+  constructor(opts?: ChromeBridgeOptions) {
+    // Create bridge page with appropriate options
+    const bridgePageOptions: GetBridgePageOptions = {
+      timeout: opts?.serverListeningTimeout,
+      closeConflictServer: opts?.closeConflictServer,
+      bridgeUrl: opts?.bridgeUrl,
+      port: opts?.port,
+    };
+    
+    const page = getBridgePageInCliSide(bridgePageOptions);
     const originalOnTaskStartTip = opts?.onTaskStartTip;
     super(
       page,

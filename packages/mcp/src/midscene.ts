@@ -34,6 +34,25 @@ declare global {
   }
 }
 
+/**
+ * Options for MidsceneManager initialization
+ */
+export interface MidsceneManagerOptions {
+  /**
+   * Optional remote Bridge WebSocket URL.
+   * If provided, connects to remote bridge instead of starting local BridgeServer.
+   * Format: ws://host:port or wss://host:port
+   * 
+   * @example
+   * // Remote mode
+   * { bridgeUrl: 'ws://192.168.1.100:3766' }
+   * 
+   * // Local mode (default)
+   * { } or undefined
+   */
+  bridgeUrl?: string;
+}
+
 export class MidsceneManager {
   private consoleLogs: string[] = [];
   private screenshots = new Map<string, string>();
@@ -46,8 +65,11 @@ export class MidsceneManager {
     MIDSCENE_MCP_ANDROID_MODE,
   ); // Add Android mode flag
   private androidDeviceId?: string; // Add device ID storage
-  constructor(server: McpServer) {
+  private bridgeUrl?: string; // Remote Bridge URL
+  
+  constructor(server: McpServer, options?: MidsceneManagerOptions) {
     this.mcpServer = server;
+    this.bridgeUrl = options?.bridgeUrl;
     this.registerTools();
   }
 
@@ -82,9 +104,13 @@ export class MidsceneManager {
   ): Promise<AgentOverChromeBridge> {
     let agent: AgentOverChromeBridge;
     try {
+      // Log bridge mode for debugging
+      console.log(`[MidsceneManager] Initializing agent with bridge: ${this.bridgeUrl || 'local (default)'}`);
+      
       // Create a new agent instance designed for bridge mode.
       agent = new AgentOverChromeBridge({
-        closeConflictServer: true,
+        closeConflictServer: false,  // Don't close for remote bridges
+        bridgeUrl: this.bridgeUrl,   // Pass custom Bridge URL (if provided)
       });
       // If this is the first initialization (not re-init),
       if (!openNewTabWithUrl) {
@@ -102,14 +128,17 @@ export class MidsceneManager {
       if (agent) {
         await agent.destroy();
       }
-      console.error('Bridge mode connection failed', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error(`[MidsceneManager] Bridge mode connection failed:`, errorMessage);
+      
       // Check if we've exceeded the maximum retry attempts
       throw new Error(
-        'Unable to establish Bridge mode connection. Please check the following issues:\n' +
-          '1. Confirm Chrome browser is running\n' +
-          '2. Midscene extension is properly installed in Chrome\n' +
-          '3. Bridge mode is enabled in the extension settings\n' +
-          '4. No other MCP clients are using the Midscene MCP server',
+        `Unable to establish Bridge mode connection. Please check the following issues:\n` +
+          `1. Confirm Chrome browser is running\n` +
+          `2. Midscene extension is properly installed in Chrome\n` +
+          `3. Bridge mode is enabled in the extension settings\n` +
+          `4. No other MCP clients are using the Midscene MCP server\n` +
+          `5. If using remote bridge, ensure the bridge URL is correct and accessible: ${this.bridgeUrl || 'N/A'}`,
       );
     }
   }
