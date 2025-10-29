@@ -45,9 +45,11 @@ export const BridgePageType = 'page-over-chrome-extension-bridge';
 export const BridgeErrorCodeNoClientConnected = 'no-client-connected';
 
 export interface BridgeCall {
+  id: string;
   method: string;
   args: any[];
   response: any;
+  createTime: number;
   callTime: number;
   responseTime: number;
   callback: (error: Error | undefined, response: any) => void;

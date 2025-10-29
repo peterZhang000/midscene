@@ -11,6 +11,7 @@ import {
   MouseEvent,
 } from './common';
 import { BridgeServer } from './io-server';
+import { BridgeRemoteClient } from './io-client';
 import type { ExtensionBridgePageBrowserSide } from './page-browser-side';
 
 interface ChromeExtensionPageCliSide extends ExtensionBridgePageBrowserSide {
@@ -33,18 +34,32 @@ export interface GetBridgePageOptions {
 export const getBridgePageInCliSide = (
   options?: GetBridgePageOptions,
 ): ChromeExtensionPageCliSide => {
-  let server: BridgeServer;
+  let server: BridgeServer | BridgeRemoteClient;
   let bridgeUrl: string;
   let isRemoteMode = false;
   
   // Determine bridge mode and URL
   if (options?.bridgeUrl) {
-    // Remote mode: use provided bridgeUrl
+    // Remote mode: connect to provided bridgeUrl
     bridgeUrl = options.bridgeUrl;
     isRemoteMode = true;
     console.log(`🌐 [getBridgePageInCliSide] Using REMOTE bridge: ${bridgeUrl}`);
-    // In remote mode, we don't create a local BridgeServer
-    // The server variable will be created but not started
+    
+    // Create BridgeRemoteClient to connect to remote Bridge
+    server = new BridgeRemoteClient(bridgeUrl);
+    
+    // Connect to remote Bridge (async, but we'll handle it in proxy)
+    (async () => {
+      try {
+        await server.connect({
+          timeout: options?.timeout,
+        });
+        console.log(`✅ [getBridgePageInCliSide] Connected to REMOTE bridge: ${bridgeUrl}`);
+      } catch (error) {
+        console.error(`❌ [getBridgePageInCliSide] Failed to connect to REMOTE bridge:`, error);
+        throw error;
+      }
+    })();
   } else {
     // Local mode: create local BridgeServer
     const port = options?.port || DefaultBridgeServerPort;
@@ -65,7 +80,7 @@ export const getBridgePageInCliSide = (
   const bridgeCaller = (method: string) => {
     return async (...args: any[]) => {
       if (!server) {
-        throw new Error('Bridge server not initialized');
+        throw new Error('Bridge not initialized');
       }
       const response = await server.call(method, args);
       return response;
@@ -74,7 +89,7 @@ export const getBridgePageInCliSide = (
   const page = {
     showStatusMessage: async (message: string) => {
       if (!server) {
-        throw new Error('Bridge server not initialized');
+        throw new Error('Bridge not initialized');
       }
       await server.call(BridgeEvent.UpdateAgentStatus, [message]);
     },
