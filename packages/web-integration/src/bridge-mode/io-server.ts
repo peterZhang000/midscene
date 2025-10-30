@@ -260,9 +260,11 @@ export class BridgeServer {
       }, timeout);
 
       this.calls[id] = {
+        id,
         method,
         args,
         response: null,
+        createTime: Date.now(),
         callTime: 0,
         responseTime: 0,
         callback: (error: Error | undefined, response: any) => {

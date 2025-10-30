@@ -270,6 +270,7 @@ export class BridgeRemoteClient {
         id,
         method,
         args,
+        response: undefined,
         createTime: Date.now(),
         callTime: 0,
         responseTime: 0,

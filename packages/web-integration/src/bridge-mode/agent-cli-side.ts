@@ -40,31 +40,36 @@ export const getBridgePageInCliSide = (
   
   // Determine bridge mode and URL
   if (options?.bridgeUrl) {
-    // Remote mode: connect to provided bridgeUrl
+    // 🔧 FIX: Connect to existing Bridge (local or remote) using BridgeRemoteClient
     bridgeUrl = options.bridgeUrl;
     isRemoteMode = true;
-    console.log(`🌐 [getBridgePageInCliSide] Using REMOTE bridge: ${bridgeUrl}`);
     
-    // Create BridgeRemoteClient to connect to remote Bridge
+    // Determine if local or remote (for logging only)
+    const isLocalhost = bridgeUrl.includes('localhost') || bridgeUrl.includes('127.0.0.1');
+    console.log(
+      `🌉 [getBridgePageInCliSide] Connecting to ${isLocalhost ? 'LOCAL' : 'REMOTE'} bridge: ${bridgeUrl}`
+    );
+    
+    // ✅ Use BridgeRemoteClient for both local and remote bridges
     server = new BridgeRemoteClient(bridgeUrl);
     
-    // Connect to remote Bridge (async, but we'll handle it in proxy)
+    // Connect to Bridge (async, but we'll handle it in proxy)
     (async () => {
       try {
         await server.connect({
           timeout: options?.timeout,
         });
-        console.log(`✅ [getBridgePageInCliSide] Connected to REMOTE bridge: ${bridgeUrl}`);
+        console.log(`✅ [getBridgePageInCliSide] Connected to bridge: ${bridgeUrl}`);
       } catch (error) {
-        console.error(`❌ [getBridgePageInCliSide] Failed to connect to REMOTE bridge:`, error);
+        console.error(`❌ [getBridgePageInCliSide] Failed to connect to bridge:`, error);
         throw error;
       }
     })();
   } else {
-    // Local mode: create local BridgeServer
+    // MCP_MANAGED mode: Start MCP-managed BridgeServer
     const port = options?.port || DefaultBridgeServerPort;
     bridgeUrl = `ws://localhost:${port}`;
-    console.log(`🏠 [getBridgePageInCliSide] Using LOCAL bridge: ${bridgeUrl}`);
+    console.log(`🏠 [getBridgePageInCliSide] Starting MCP-managed BridgeServer: ${bridgeUrl}`);
     
     server = new BridgeServer(
       port,
