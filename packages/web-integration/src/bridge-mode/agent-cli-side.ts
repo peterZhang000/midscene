@@ -37,6 +37,7 @@ export const getBridgePageInCliSide = (
   let server: BridgeServer | BridgeRemoteClient;
   let bridgeUrl: string;
   let isRemoteMode = false;
+  let connectionPromise: Promise<void> | null = null;  // 🔧 Track connection status
   
   // Determine bridge mode and URL
   if (options?.bridgeUrl) {
@@ -53,18 +54,15 @@ export const getBridgePageInCliSide = (
     // ✅ Use BridgeRemoteClient for both local and remote bridges
     server = new BridgeRemoteClient(bridgeUrl);
     
-    // Connect to Bridge (async, but we'll handle it in proxy)
-    (async () => {
-      try {
-        await server.connect({
-          timeout: options?.timeout,
-        });
-        console.log(`✅ [getBridgePageInCliSide] Connected to bridge: ${bridgeUrl}`);
-      } catch (error) {
-        console.error(`❌ [getBridgePageInCliSide] Failed to connect to bridge:`, error);
-        throw error;
-      }
-    })();
+    // 🔧 FIX: Store the connection promise and await it properly
+    connectionPromise = server.connect({
+      timeout: options?.timeout,
+    }).then(() => {
+      console.log(`✅ [getBridgePageInCliSide] Connected to bridge: ${bridgeUrl}`);
+    }).catch((error) => {
+      console.error(`❌ [getBridgePageInCliSide] Failed to connect to bridge:`, error);
+      throw error;
+    });
   } else {
     // MCP_MANAGED mode: Start MCP-managed BridgeServer
     const port = options?.port || DefaultBridgeServerPort;
@@ -87,6 +85,13 @@ export const getBridgePageInCliSide = (
       if (!server) {
         throw new Error('Bridge not initialized');
       }
+      
+      // 🔧 FIX: Wait for connection to complete before making calls
+      if (connectionPromise) {
+        await connectionPromise;
+        connectionPromise = null;  // Clear after first use
+      }
+      
       const response = await server.call(method, args);
       return response;
     };
@@ -96,6 +101,13 @@ export const getBridgePageInCliSide = (
       if (!server) {
         throw new Error('Bridge not initialized');
       }
+      
+      // 🔧 FIX: Wait for connection to complete before making calls
+      if (connectionPromise) {
+        await connectionPromise;
+        connectionPromise = null;  // Clear after first use
+      }
+      
       await server.call(BridgeEvent.UpdateAgentStatus, [message]);
     },
   };
