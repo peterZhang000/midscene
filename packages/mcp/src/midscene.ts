@@ -915,6 +915,16 @@ export class MidsceneManager {
   }
 
   public async closeBrowser(): Promise<void> {
+    // 🔄 In persistent mode, don't destroy the agent - let it stay alive for reuse
+    if (this.persistent && this.agent) {
+      console.log('🔄 [closeBrowser] Persistent mode: keeping agent alive for reuse');
+      // In persistent mode, we don't destroy the agent
+      // The agent will be reused for the next test session
+      return;
+    }
+    
+    // 🗑️ Traditional mode: destroy the agent
+    console.log('🗑️ [closeBrowser] Traditional mode: destroying agent');
     await this.agent?.destroy();
   }
 
