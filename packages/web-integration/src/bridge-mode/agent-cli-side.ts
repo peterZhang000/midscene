@@ -28,6 +28,7 @@ export interface GetBridgePageOptions {
   closeConflictServer?: boolean;
   bridgeUrl?: string;  // Remote Bridge WebSocket URL
   port?: number;       // Local Bridge port (for backward compatibility)
+  persistent?: boolean; // 🔄 Persistent Mode: Keep connection alive across tests (default: false)
 }
 
 // actually, this is a proxy to the page in browser side
@@ -161,14 +162,34 @@ export const getBridgePageInCliSide = (
       if (prop === 'destroy') {
         return async (...args: any[]) => {
           try {
-            const caller = bridgeCaller('destroy');
-            await caller(...args);
+            // 🔄 Persistent Mode: Call cleanup instead of destroy
+            if (isRemoteMode && options?.persistent) {
+              console.log('🔄 Persistent mode: calling cleanup() instead of destroy()');
+              const caller = bridgeCaller('cleanup');
+              await caller(...args);
+            } else {
+              // Original behavior: full destroy
+              console.log('🗑️ Traditional mode: calling destroy()');
+              const caller = bridgeCaller('destroy');
+              await caller(...args);
+            }
           } catch (e) {
-            // console.error('error calling destroy', e);
+            console.error('error calling destroy/cleanup', e);
           }
-          // Only close server in local mode
-          if (server) {
-            return server.close();
+          
+          // Only close server in MCP_MANAGED mode or non-persistent remote mode
+          if (server && !(isRemoteMode && options?.persistent)) {
+            console.log('📡 Closing server connection');
+            if (server instanceof BridgeRemoteClient) {
+              await server.close();
+            } else if (typeof server.close === 'function') {
+              server.close();
+            }
+            return;
+          }
+          
+          if (isRemoteMode && options?.persistent) {
+            console.log('✅ Persistent mode: keeping server connection alive');
           }
         };
       }
@@ -203,6 +224,17 @@ export interface ChromeBridgeOptions extends AgentOpt {
    * @deprecated Use bridgeUrl for remote connections
    */
   port?: number;
+  
+  /**
+   * 🔄 Enable persistent mode to keep Bridge connection alive across tests.
+   * When enabled, only test-specific state is cleaned up between tests.
+   * 
+   * @default false
+   * 
+   * @example
+   * { bridgeUrl: 'ws://localhost:3766', persistent: true }
+   */
+  persistent?: boolean;
 }
 
 export class AgentOverChromeBridge extends Agent<ChromeExtensionPageCliSide> {
@@ -215,6 +247,7 @@ export class AgentOverChromeBridge extends Agent<ChromeExtensionPageCliSide> {
       closeConflictServer: opts?.closeConflictServer,
       bridgeUrl: opts?.bridgeUrl,
       port: opts?.port,
+      persistent: opts?.persistent, // 🔄 Pass persistent mode flag
     };
     
     const page = getBridgePageInCliSide(bridgePageOptions);

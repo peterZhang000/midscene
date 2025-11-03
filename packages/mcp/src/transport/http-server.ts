@@ -159,10 +159,14 @@ export class MCPHttpServer {
       const bridgeUrl = req.headers['x-bridge-url'] as string | undefined;
       const userId = req.headers['x-user-id'] as string | undefined;
       const customSessionId = req.headers['x-session-id'] as string | undefined;
+      const bridgePersistent = req.headers['x-bridge-persistent'] === 'true'; // 🔄 Extract persistent flag
       
       // Log bridge configuration if provided
       if (bridgeUrl) {
         console.error(`[MCP HTTP Server] X-Bridge-URL: ${bridgeUrl}`);
+        if (bridgePersistent) {
+          console.error(`[MCP HTTP Server] X-Bridge-Persistent: true`);
+        }
         if (userId) {
           console.error(`[MCP HTTP Server] X-User-ID: ${userId}`);
         }
@@ -201,13 +205,13 @@ export class MCPHttpServer {
 
       // Handle GET request for SSE (Server-Sent Events)
       if (req.method === 'GET') {
-        await this.handleSSEConnection(req, res, sessionId, bridgeUrl);
+        await this.handleSSEConnection(req, res, sessionId, bridgeUrl, bridgePersistent);
         return;
       }
 
       // Handle POST request for JSON-RPC
       if (req.method === 'POST') {
-        await this.handleJSONRPCRequest(req, res, sessionId, bridgeUrl);
+        await this.handleJSONRPCRequest(req, res, sessionId, bridgeUrl, bridgePersistent);
         return;
       }
 
@@ -243,7 +247,8 @@ export class MCPHttpServer {
     req: Request,
     res: Response,
     sessionId: string,
-    bridgeUrl?: string
+    bridgeUrl?: string,
+    bridgePersistent?: boolean
   ): Promise<void> {
     // Set SSE headers
     res.writeHead(200, {
@@ -255,8 +260,12 @@ export class MCPHttpServer {
     // Send initial comment to establish connection
     res.write(': connected\n\n');
 
-    // Get or create MCP session (with optional bridgeUrl)
-    const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId, bridgeUrl);
+    // Get or create MCP session (with optional bridgeUrl and persistent flag)
+    const mcpSession = await this.mcpSessionManager.getOrCreateSession(
+      sessionId, 
+      bridgeUrl, 
+      bridgePersistent
+    );
 
     // Listen for responses from the MCP server
     const responseHandler = (message: JSONRPCMessage) => {
@@ -283,7 +292,8 @@ export class MCPHttpServer {
     req: Request,
     res: Response,
     sessionId: string,
-    bridgeUrl?: string
+    bridgeUrl?: string,
+    bridgePersistent?: boolean
   ): Promise<void> {
     const jsonRpcRequest: JSONRPCRequest = req.body;
 
@@ -299,8 +309,12 @@ export class MCPHttpServer {
     }
 
     try {
-      // Get or create MCP session (with optional bridgeUrl)
-      const mcpSession = await this.mcpSessionManager.getOrCreateSession(sessionId, bridgeUrl);
+      // Get or create MCP session (with optional bridgeUrl and persistent flag)
+      const mcpSession = await this.mcpSessionManager.getOrCreateSession(
+        sessionId, 
+        bridgeUrl, 
+        bridgePersistent
+      );
 
       // Process the request through the memory transport
       // This will emit 'message' to the MCP server and wait for the response

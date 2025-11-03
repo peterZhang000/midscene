@@ -37,7 +37,8 @@ export const killRunningServer = async (port?: number) => {
 export class BridgeServer {
   private callId = 0;
   private io: Server | null = null;
-  private socket: ServerSocket | null = null;
+  private socket: ServerSocket | null = null;  // Chrome extension socket
+  private mcpSocket: ServerSocket | null = null;  // 🔧 FIX: MCP Server socket
   private listeningTimeoutId: NodeJS.Timeout | null = null;
   private listeningTimerFlag = false;
   private connectionTipTimer: NodeJS.Timeout | null = null;
@@ -100,10 +101,15 @@ export class BridgeServer {
       });
 
       this.io.use((socket, next) => {
-        if (this.socket) {
+        // 🔧 FIX: Allow MCP Server to connect even if Chrome extension is connected
+        const clientType = socket.handshake.query.client_type;
+        
+        if (this.socket && clientType !== 'mcp_server') {
+          // Only reject non-MCP clients when already connected
           next(new Error('server already connected by another client'));
+        } else {
+          next();
         }
-        next();
       });
 
       this.io.on('connection', (socket) => {
@@ -120,9 +126,13 @@ export class BridgeServer {
         this.listeningTimeoutId = null;
         this.connectionTipTimer && clearTimeout(this.connectionTipTimer);
         this.connectionTipTimer = null;
-        if (this.socket) {
+        
+        // 🔧 FIX: Allow MCP Server to connect even if Chrome extension is connected
+        const clientType = socket.handshake.query.client_type;
+        
+        if (this.socket && clientType !== 'mcp_server') {
+          // Only reject non-MCP clients when already connected
           socket.emit(BridgeEvent.Refused);
-          // close the socket
           socket.disconnect();
 
           return reject(
@@ -131,12 +141,21 @@ export class BridgeServer {
         }
 
         try {
-          logMsg('one client connected');
-          this.socket = socket;
+          // 🔧 FIX: Distinguish between Chrome extension and MCP Server
+          const clientType = socket.handshake.query.client_type;
+          const isMcpClient = clientType === 'mcp_server';
+          
+          if (isMcpClient) {
+            logMsg('MCP Server client connected');
+            this.mcpSocket = socket;
+          } else {
+            logMsg('Chrome extension client connected');
+            this.socket = socket;
+          }
 
           const clientVersion = socket.handshake.query.version;
           logMsg(
-            `Bridge connected, cli-side version v${__VERSION__}, browser-side version v${clientVersion}`,
+            `Bridge connected (${isMcpClient ? 'MCP Server' : 'Chrome Extension'}), cli-side version v${__VERSION__}, browser-side version v${clientVersion}`,
           );
 
           socket.on(BridgeEvent.CallResponse, (params: BridgeCallResponse) => {
@@ -144,34 +163,79 @@ export class BridgeServer {
             const response = params.response;
             const error = params.error;
 
-            this.triggerCallResponseCallback(id, error, response);
+            // 🔧 FIX: If this response is for a local call, trigger callback
+            // Otherwise, forward the response to MCP Server
+            const call = this.calls[id];
+            if (call) {
+              // This is a local call (initiated by BridgeServer.call())
+              this.triggerCallResponseCallback(id, error, response);
+            } else if (this.mcpSocket && this.mcpSocket.connected) {
+              // This is a remote call from MCP Server, forward the response back
+              logMsg(`Forwarding response to MCP Server: id=${id}`);
+              this.mcpSocket.emit(BridgeEvent.CallResponse, params);
+            } else {
+              logMsg(`Warning: Received response for unknown call id=${id}`);
+            }
           });
 
-          socket.on('disconnect', (reason: string) => {
-            this.connectionLost = true;
-            this.connectionLostReason = reason;
-
-            try {
-              this.io?.close();
-            } catch (e) {
-              // ignore
-            }
-
-            // flush all pending calls as error
-            for (const id in this.calls) {
-              const call = this.calls[id];
-
-              if (!call.responseTime) {
-                const errorMessage = this.connectionLostErrorMsg();
-                this.triggerCallResponseCallback(
-                  id,
-                  new Error(errorMessage),
-                  null,
-                );
+          // 🔧 FIX: Listen for Call events from MCP Server and forward to Chrome Extension
+          if (isMcpClient) {
+            socket.on(BridgeEvent.Call, (params: { id: string; method: string; args: any[] }) => {
+              logMsg(`Received call from MCP Server: ${params.method} (id: ${params.id})`);
+              
+              // Forward the call to Chrome Extension
+              if (this.socket && this.socket.connected) {
+                this.socket.emit(BridgeEvent.Call, params);
+                logMsg(`Forwarded call to Chrome Extension: ${params.method} (id: ${params.id})`);
+              } else {
+                // Chrome Extension not connected, send error response back to MCP Server
+                logMsg(`Chrome Extension not connected, cannot forward call: ${params.method}`);
+                socket.emit(BridgeEvent.CallResponse, {
+                  id: params.id,
+                  error: new Error('Chrome Extension not connected'),
+                  response: null,
+                });
               }
-            }
+            });
+          }
 
-            this.onDisconnect?.(reason);
+          socket.on('disconnect', (reason: string) => {
+            // 🔧 FIX: Only close server if Chrome extension disconnects
+            const clientType = socket.handshake.query.client_type;
+            const isMcpClient = clientType === 'mcp_server';
+            
+            if (isMcpClient) {
+              logMsg('MCP Server client disconnected');
+              this.mcpSocket = null;
+              // Don't close the server, Chrome extension might still be connected
+            } else {
+              logMsg('Chrome extension client disconnected');
+              this.socket = null;
+              this.connectionLost = true;
+              this.connectionLostReason = reason;
+
+              try {
+                this.io?.close();
+              } catch (e) {
+                // ignore
+              }
+
+              // flush all pending calls as error
+              for (const id in this.calls) {
+                const call = this.calls[id];
+
+                if (!call.responseTime) {
+                  const errorMessage = this.connectionLostErrorMsg();
+                  this.triggerCallResponseCallback(
+                    id,
+                    new Error(errorMessage),
+                    null,
+                  );
+                }
+              }
+
+              this.onDisconnect?.(reason);
+            }
           });
 
           setTimeout(() => {

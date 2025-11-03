@@ -166,18 +166,88 @@ export class ExtensionBridgePageBrowserSide extends ChromeExtensionProxyPage {
     this.destroyOptions = options;
   }
 
-  async destroy() {
+  /**
+   * 🔄 Persistent Mode: Cleanup test state without disconnecting bridge
+   * 
+   * This method:
+   * - Closes newly created tabs (if destroyOptions.closeTab is true)
+   * - Resets the newlyCreatedTabIds array
+   * - Calls parent class destroy (cleanup DOM state)
+   * - Resets destroyOptions
+   * - Reconnects to the current active tab (critical for multi-tab scenarios)
+   * - KEEPS the bridgeClient connection alive
+   */
+  async cleanup() {
+    // Close newly created tabs
     if (this.destroyOptions?.closeTab && this.newlyCreatedTabIds.length > 0) {
-      this.onLogMessage('Closing all newly created tabs by bridge...', 'log');
+      this.onLogMessage('🔄 Cleanup: Closing all newly created tabs...', 'log');
       for (const tabId of this.newlyCreatedTabIds) {
-        await chrome.tabs.remove(tabId);
+        try {
+          await chrome.tabs.remove(tabId);
+        } catch (e) {
+          console.warn(`Failed to close tab ${tabId}:`, e);
+        }
       }
       this.newlyCreatedTabIds = [];
     }
 
+    // Call parent cleanup (DOM state reset)
     await super.destroy();
 
+    // 🔧 CRITICAL FIX: Reconnect to current active tab
+    // This is essential when navigate() creates a new tab - we need to switch our connection
+    try {
+      this.onLogMessage('🔄 Cleanup: Reconnecting to current active tab...', 'log');
+      await this.connectCurrentTab({ forceSameTabNavigation: true });
+      console.log('✅ Successfully reconnected to current active tab');
+    } catch (e) {
+      console.warn('⚠️ Failed to reconnect to current tab during cleanup:', e);
+      // Don't throw - this is not critical enough to fail the cleanup
+    }
+
+    // 🔧 CRITICAL FIX: Verify Bridge connection health after cleanup
+    try {
+      if (this.bridgeClient) {
+        // Check if bridge connection is still alive
+        const isConnected = (this.bridgeClient as any).connected;
+        if (!isConnected) {
+          this.onLogMessage('⚠️ Cleanup: Bridge connection lost, attempting reconnection...', 'log');
+          // Reconnect to bridge
+          await this.setupBridgeClient();
+          console.log('✅ Bridge reconnected successfully after cleanup');
+        } else {
+          console.log('✅ Bridge connection healthy after cleanup');
+        }
+      }
+    } catch (e) {
+      console.error('❌ Failed to verify/restore bridge connection during cleanup:', e);
+      // Try to reconnect anyway
+      try {
+        await this.setupBridgeClient();
+        console.log('✅ Bridge reconnected successfully after error');
+      } catch (reconnectError) {
+        console.error('❌ Failed to reconnect bridge after cleanup error:', reconnectError);
+        // This is serious - the next test will likely fail
+      }
+    }
+
+    // Reset destroy options
+    this.destroyOptions = undefined;
+
+    console.log('✅ Cleanup completed (bridge connection maintained)');
+    // NOTE: bridgeClient stays connected for next test
+  }
+
+  /**
+   * Full destroy: Cleanup state + disconnect bridge
+   */
+  async destroy() {
+    // First cleanup state
+    await this.cleanup();
+
+    // Then disconnect bridge
     if (this.bridgeClient) {
+      this.onLogMessage('🗑️ Destroy: Disconnecting bridge client...', 'log');
       this.bridgeClient.disconnect();
       this.bridgeClient = null;
       this.onDisconnect();

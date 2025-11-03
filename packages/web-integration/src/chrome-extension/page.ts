@@ -465,6 +465,43 @@ export default class ChromeExtensionProxyPage implements AbstractInterface {
     return url || '';
   }
 
+  /**
+   * Navigate to a URL in the current tab
+   * @param url The URL to navigate to
+   */
+  async goto(url: string): Promise<void> {
+    const tabId = await this.getTabIdOrConnectToCurrentTab();
+    
+    // Use Chrome tabs API to navigate in the current tab
+    await chrome.tabs.update(tabId, { url });
+    
+    // Wait for navigation to complete by polling the tab's loading status
+    await new Promise<void>((resolve, reject) => {
+      const startTime = Date.now();
+      const timeout = 30000; // 30 seconds timeout
+      
+      const checkComplete = async () => {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          
+          if (tab.status === 'complete') {
+            // Add a small delay to ensure page is fully loaded
+            setTimeout(() => resolve(), 500);
+          } else if (Date.now() - startTime > timeout) {
+            reject(new Error(`Navigation timeout after ${timeout}ms`));
+          } else {
+            // Check again in 100ms
+            setTimeout(checkComplete, 100);
+          }
+        } catch (e) {
+          reject(new Error(`Failed to check tab status: ${e}`));
+        }
+      };
+      
+      checkComplete();
+    });
+  }
+
   async scrollUntilTop(startingPoint?: Point) {
     if (startingPoint) {
       await this.mouse.move(startingPoint.left, startingPoint.top);

@@ -43,8 +43,13 @@ export class MCPSessionManager {
    * Get or create an MCP Server instance for a session
    * @param sessionId - Unique session identifier
    * @param bridgeUrl - Optional remote Bridge WebSocket URL (e.g., ws://192.168.1.100:3766)
+   * @param bridgePersistent - Optional flag to enable persistent mode (keep connection alive)
    */
-  async getOrCreateSession(sessionId: string, bridgeUrl?: string): Promise<MCPSessionInstance> {
+  async getOrCreateSession(
+    sessionId: string, 
+    bridgeUrl?: string, 
+    bridgePersistent?: boolean
+  ): Promise<MCPSessionInstance> {
     let session = this.sessions.get(sessionId);
 
     if (session) {
@@ -57,6 +62,9 @@ export class MCPSessionManager {
     console.error(`📦 Creating new MCP Server instance for session: ${sessionId}`);
     if (bridgeUrl) {
       console.error(`🌐 Session will use REMOTE bridge: ${bridgeUrl}`);
+      if (bridgePersistent) {
+        console.error(`🔄 Persistent mode ENABLED: Bridge connection will be reused`);
+      }
     } else {
       console.error(`🏠 Session will use LOCAL bridge (default)`);
     }
@@ -86,8 +94,11 @@ export class MCPSessionManager {
       },
     );
 
-    // Create Midscene manager for this session (with optional bridgeUrl)
-    const midsceneManager = new MidsceneManager(server, { bridgeUrl });
+    // Create Midscene manager for this session (with optional bridgeUrl and persistent flag)
+    const midsceneManager = new MidsceneManager(server, { 
+      bridgeUrl, 
+      persistent: bridgePersistent 
+    });
 
     // Create memory transport for this session
     const transport = new MemoryTransport();

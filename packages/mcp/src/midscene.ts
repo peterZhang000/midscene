@@ -51,6 +51,22 @@ export interface MidsceneManagerOptions {
    * { } or undefined
    */
   bridgeUrl?: string;
+  
+  /**
+   * 🔄 Optional persistent mode flag.
+   * If true, the Bridge connection and Chrome Extension will be kept alive
+   * across multiple test executions. Only test-specific state will be cleaned up.
+   * 
+   * @default false
+   * 
+   * @example
+   * // Persistent mode (recommended for multiple tests)
+   * { bridgeUrl: 'ws://localhost:3766', persistent: true }
+   * 
+   * // Traditional mode (one-shot)
+   * { bridgeUrl: 'ws://localhost:3766', persistent: false }
+   */
+  persistent?: boolean;
 }
 
 export class MidsceneManager {
@@ -66,23 +82,60 @@ export class MidsceneManager {
   ); // Add Android mode flag
   private androidDeviceId?: string; // Add device ID storage
   private bridgeUrl?: string; // Remote Bridge URL
+  private persistent?: boolean; // 🔄 Persistent mode flag
   
   constructor(server: McpServer, options?: MidsceneManagerOptions) {
     this.mcpServer = server;
     this.bridgeUrl = options?.bridgeUrl;
+    this.persistent = options?.persistent;
     this.registerTools();
   }
 
   // initializes or re-initializes the browser agent.
   private async initAgent(openNewTabWithUrl?: string) {
-    // re-init the agent if url is provided
+    // 🔄 Persistent Mode: Reuse agent and navigate in current tab
+    if (this.agent && openNewTabWithUrl && this.persistent) {
+      console.log(`🔄 [initAgent] Persistent mode: Navigating in current tab to ${openNewTabWithUrl}`);
+      try {
+        // Use page.goto() which now works for both Puppeteer and Chrome Extension
+        await this.agent.page.goto(openNewTabWithUrl);
+        console.log(`✅ [initAgent] Successfully navigated to ${openNewTabWithUrl} in current tab`);
+        return this.agent;
+      } catch (e) {
+        console.error(`❌ [initAgent] Failed to navigate in current tab:`, e);
+        // If navigation fails, fall through to recreate agent
+      }
+    }
+
+    // 🗑️ Traditional Mode: Destroy and recreate agent
     if (this.agent && openNewTabWithUrl) {
+      console.log(`🗑️ [initAgent] Traditional mode: Destroying existing agent and creating new one`);
       try {
         await this.agent.destroy();
       } catch (e) {
         // console.error('failed to destroy agent', e);
       }
       this.agent = undefined;
+    }
+
+    // 🔧 CRITICAL FIX: Check if existing agent is connected to chrome:// page
+    if (this.agent && this.persistent) {
+      try {
+        console.log(`🔍 [initAgent] Checking existing agent's current tab in persistent mode`);
+        const tabsInfo = await this.agent.getBrowserTabList();
+        const currentTab = tabsInfo.find((tab: any) => tab.active);
+        
+        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
+          console.log(`⚠️ [initAgent] Existing agent connected to chrome:// page (${currentTab.url}), fixing connection`);
+          // Open a blank page to establish proper debugger connection
+          await this.agent.connectNewTabWithUrl('about:blank');
+          console.log(`✅ [initAgent] Successfully connected to about:blank, ready for operations`);
+        }
+      } catch (e) {
+        console.error(`❌ [initAgent] Failed to check/fix existing agent connection:`, e);
+        // If check fails, recreate agent
+        this.agent = undefined;
+      }
     }
 
     if (this.agent) return this.agent;
@@ -106,21 +159,53 @@ export class MidsceneManager {
     try {
       // Log bridge mode for debugging
       console.log(`[MidsceneManager] Initializing agent with bridge: ${this.bridgeUrl || 'local (default)'}`);
+      if (this.persistent) {
+        console.log(`[MidsceneManager] 🔄 Persistent mode ENABLED`);
+      }
       
       // Create a new agent instance designed for bridge mode.
       agent = new AgentOverChromeBridge({
         closeConflictServer: false,  // Don't close for remote bridges
         bridgeUrl: this.bridgeUrl,   // Pass custom Bridge URL (if provided)
+        persistent: this.persistent, // 🔄 Pass persistent mode flag
       });
+      
       // If this is the first initialization (not re-init),
       if (!openNewTabWithUrl) {
-        // Connect the agent to the currently active tab in the browser.
-        await agent.connectCurrentTab();
+        // 🔧 Get current tab info to check if it's a chrome:// page
         const tabsInfo = await agent.getBrowserTabList();
+        const currentTab = tabsInfo.find((tab: any) => tab.active);
+        
+        // Check if current tab is a chrome:// page (system page that can't be debugged)
+        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
+          console.log(`⚠️ [MidsceneManager] Current tab is a chrome:// page (${currentTab.url}), opening about:blank instead`);
+          // Open a blank page that can be debugged
+          await agent.connectNewTabWithUrl('about:blank');
+        } else {
+          // Connect the agent to the currently active tab in the browser.
+          await agent.connectCurrentTab();
+        }
+        
         // Send active tab information in a well-structured format
-        this.sendActiveTabInfo(tabsInfo);
+        const updatedTabsInfo = await agent.getBrowserTabList();
+        this.sendActiveTabInfo(updatedTabsInfo);
       } else {
-        await agent.connectNewTabWithUrl(openNewTabWithUrl);
+        // 🔧 When opening a new tab, also check if current tab is chrome://
+        // This prevents errors when taking screenshots before navigation completes
+        const tabsInfo = await agent.getBrowserTabList();
+        const currentTab = tabsInfo.find((tab: any) => tab.active);
+        
+        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
+          console.log(`⚠️ [MidsceneManager] Current tab is chrome:// page before navigation, connecting to avoid errors`);
+          // Connect to a blank page first to establish debugger connection
+          await agent.connectNewTabWithUrl('about:blank');
+          // Then navigate to the target URL in the same tab using goto()
+          await agent.page.goto(openNewTabWithUrl);
+          console.log(`✅ [MidsceneManager] Navigated to ${openNewTabWithUrl} after opening blank tab`);
+        } else {
+          // Normal flow: open new tab with URL
+          await agent.connectNewTabWithUrl(openNewTabWithUrl);
+        }
       }
       return agent;
     } catch (err) {
