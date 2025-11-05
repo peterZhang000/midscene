@@ -1,0 +1,25 @@
+# Source files
+src/
+tsconfig.json
+rslib.config.ts
+
+# Scripts and docs not needed in published package
+scripts/
+PACKAGING.md
+SUMMARY.md
+如何分发给用户.md
+
+# Development files
+.gitignore
+*.log
+node_modules/
+
+# Only include built files
+# dist/ is kept
+# bin/ is kept
+# README.md is kept
+# QUICK_START.md is kept
+# examples/ is kept
+# package.json is kept
+
+

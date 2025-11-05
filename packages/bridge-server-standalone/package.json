@@ -1,0 +1,52 @@
+{
+  "name": "@midscene/bridge-server-standalone",
+  "version": "0.1.0",
+  "description": "Standalone Bridge Server for Midscene - connects Chrome Extension with MCP clients",
+  "keywords": [
+    "midscene",
+    "bridge",
+    "server",
+    "chrome-extension",
+    "mcp"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "midscene-bridge": "./bin/midscene-bridge"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@midscene/core": "^0.30.2",
+    "@midscene/shared": "^0.30.2",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "4.8.1"
+  },
+  "devDependencies": {
+    "@rslib/core": "^0.11.2",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/web-infra-dev/midscene",
+    "directory": "packages/bridge-server-standalone"
+  },
+  "license": "MIT"
+}
+
+
