@@ -93,6 +93,27 @@ export class MidsceneManager {
 
   // initializes or re-initializes the browser agent.
   private async initAgent(openNewTabWithUrl?: string) {
+    // 🔧 CRITICAL FIX: Check if existing agent is connected to chrome:// page FIRST
+    // This must be done BEFORE any "return this.agent" statements!
+    if (this.agent && this.persistent) {
+      try {
+        console.log(`🔍 [initAgent] Checking existing agent's current tab in persistent mode`);
+        const tabsInfo = await this.agent.getBrowserTabList();
+        const currentTab = tabsInfo.find((tab: any) => tab.active);
+        
+        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
+          console.log(`⚠️ [initAgent] Existing agent connected to chrome:// page (${currentTab.url}), fixing connection`);
+          // Open a blank page to establish proper debugger connection
+          await this.agent.connectNewTabWithUrl('about:blank');
+          console.log(`✅ [initAgent] Successfully connected to about:blank, ready for operations`);
+        }
+      } catch (e) {
+        console.error(`❌ [initAgent] Failed to check/fix existing agent connection:`, e);
+        // If check fails, recreate agent
+        this.agent = undefined;
+      }
+    }
+
     // 🔄 Persistent Mode: Reuse agent and navigate in current tab
     if (this.agent && openNewTabWithUrl && this.persistent) {
       console.log(`🔄 [initAgent] Persistent mode: Navigating in current tab to ${openNewTabWithUrl}`);
@@ -116,26 +137,6 @@ export class MidsceneManager {
         // console.error('failed to destroy agent', e);
       }
       this.agent = undefined;
-    }
-
-    // 🔧 CRITICAL FIX: Check if existing agent is connected to chrome:// page
-    if (this.agent && this.persistent) {
-      try {
-        console.log(`🔍 [initAgent] Checking existing agent's current tab in persistent mode`);
-        const tabsInfo = await this.agent.getBrowserTabList();
-        const currentTab = tabsInfo.find((tab: any) => tab.active);
-        
-        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
-          console.log(`⚠️ [initAgent] Existing agent connected to chrome:// page (${currentTab.url}), fixing connection`);
-          // Open a blank page to establish proper debugger connection
-          await this.agent.connectNewTabWithUrl('about:blank');
-          console.log(`✅ [initAgent] Successfully connected to about:blank, ready for operations`);
-        }
-      } catch (e) {
-        console.error(`❌ [initAgent] Failed to check/fix existing agent connection:`, e);
-        // If check fails, recreate agent
-        this.agent = undefined;
-      }
     }
 
     if (this.agent) return this.agent;
