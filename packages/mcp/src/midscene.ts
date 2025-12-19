@@ -69,6 +69,20 @@ export interface MidsceneManagerOptions {
   persistent?: boolean;
 }
 
+/**
+ * List of URL prefixes that cannot be debugged by Chrome DevTools Protocol
+ * These URLs will cause errors if we try to attach the debugger
+ */
+const UNDEBUGABLE_URL_PREFIXES = [
+  'chrome://',           // Chrome internal pages
+  'chrome-extension://', // Extension pages
+  'edge://',             // Edge internal pages
+  'about:',              // About pages (except about:blank which is handled separately)
+  'devtools://',         // DevTools pages
+  'view-source:',        // View source pages
+  'data:',               // Data URLs (sometimes problematic)
+];
+
 export class MidsceneManager {
   private consoleLogs: string[] = [];
   private screenshots = new Map<string, string>();
@@ -91,9 +105,45 @@ export class MidsceneManager {
     this.registerTools();
   }
 
+  /**
+   * Check if a URL is undebugable (cannot attach Chrome debugger)
+   * @param url - URL to check
+   * @returns true if URL cannot be debugged
+   */
+  private isUndebugableUrl(url: string): boolean {
+    if (!url) return false;
+    
+    // Allow about:blank (it's safe to debug)
+    if (url === 'about:blank') return false;
+    
+    // Check against all undebugable URL prefixes
+    return UNDEBUGABLE_URL_PREFIXES.some(prefix => url.startsWith(prefix));
+  }
+
+  /**
+   * Ensure the current context is debuggable
+   * If on an undebugable URL, navigate to a safe data URL
+   */
+  private async ensureDebuggableContext(agent: AgentOverChromeBridge): Promise<void> {
+    try {
+      const tabsInfo = await agent.getBrowserTabList();
+      const currentTab = tabsInfo.find((tab: any) => tab.active);
+      
+      if (currentTab && currentTab.url && this.isUndebugableUrl(currentTab.url)) {
+        console.log(`⚠️ [MidsceneManager] Current tab is on undebugable URL (${currentTab.url}), navigating to safe context`);
+        // Use data URL instead of about:blank for better compatibility
+        await agent.connectNewTabWithUrl('data:text/html,<html><body></body></html>');
+        console.log(`✅ [MidsceneManager] Successfully navigated to safe debuggable context`);
+      }
+    } catch (e) {
+      console.error(`❌ [MidsceneManager] Failed to ensure debuggable context:`, e);
+      throw e;
+    }
+  }
+
   // initializes or re-initializes the browser agent.
   private async initAgent(openNewTabWithUrl?: string) {
-    // 🔧 CRITICAL FIX: Check if existing agent is connected to chrome:// page FIRST
+    // 🔧 CRITICAL FIX: Check if existing agent is connected to undebugable page FIRST
     // This must be done BEFORE any "return this.agent" statements!
     if (this.agent && this.persistent) {
       try {
@@ -101,11 +151,11 @@ export class MidsceneManager {
         const tabsInfo = await this.agent.getBrowserTabList();
         const currentTab = tabsInfo.find((tab: any) => tab.active);
         
-        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
-          console.log(`⚠️ [initAgent] Existing agent connected to chrome:// page (${currentTab.url}), fixing connection`);
-          // Open a blank page to establish proper debugger connection
-          await this.agent.connectNewTabWithUrl('about:blank');
-          console.log(`✅ [initAgent] Successfully connected to about:blank, ready for operations`);
+        if (currentTab && currentTab.url && this.isUndebugableUrl(currentTab.url)) {
+          console.log(`⚠️ [initAgent] Existing agent connected to undebugable page (${currentTab.url}), fixing connection`);
+          // Navigate to a safe debuggable context
+          await this.agent.connectNewTabWithUrl('data:text/html,<html><body></body></html>');
+          console.log(`✅ [initAgent] Successfully connected to safe context, ready for operations`);
         }
       } catch (e) {
         console.error(`❌ [initAgent] Failed to check/fix existing agent connection:`, e);
@@ -173,15 +223,15 @@ export class MidsceneManager {
       
       // If this is the first initialization (not re-init),
       if (!openNewTabWithUrl) {
-        // 🔧 Get current tab info to check if it's a chrome:// page
+        // 🔧 Get current tab info to check if it's an undebugable page
         const tabsInfo = await agent.getBrowserTabList();
         const currentTab = tabsInfo.find((tab: any) => tab.active);
         
-        // Check if current tab is a chrome:// page (system page that can't be debugged)
-        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
-          console.log(`⚠️ [MidsceneManager] Current tab is a chrome:// page (${currentTab.url}), opening about:blank instead`);
-          // Open a blank page that can be debugged
-          await agent.connectNewTabWithUrl('about:blank');
+        // Check if current tab is an undebugable page (system pages that can't be debugged)
+        if (currentTab && currentTab.url && this.isUndebugableUrl(currentTab.url)) {
+          console.log(`⚠️ [MidsceneManager] Current tab is on undebugable URL (${currentTab.url}), opening safe context instead`);
+          // Open a safe page that can be debugged
+          await agent.connectNewTabWithUrl('data:text/html,<html><body></body></html>');
         } else {
           // Connect the agent to the currently active tab in the browser.
           await agent.connectCurrentTab();
@@ -191,18 +241,18 @@ export class MidsceneManager {
         const updatedTabsInfo = await agent.getBrowserTabList();
         this.sendActiveTabInfo(updatedTabsInfo);
       } else {
-        // 🔧 When opening a new tab, also check if current tab is chrome://
+        // 🔧 When opening a new tab, also check if current tab is undebugable
         // This prevents errors when taking screenshots before navigation completes
         const tabsInfo = await agent.getBrowserTabList();
         const currentTab = tabsInfo.find((tab: any) => tab.active);
         
-        if (currentTab && currentTab.url && currentTab.url.startsWith('chrome://')) {
-          console.log(`⚠️ [MidsceneManager] Current tab is chrome:// page before navigation, connecting to avoid errors`);
-          // Connect to a blank page first to establish debugger connection
-          await agent.connectNewTabWithUrl('about:blank');
+        if (currentTab && currentTab.url && this.isUndebugableUrl(currentTab.url)) {
+          console.log(`⚠️ [MidsceneManager] Current tab is on undebugable URL before navigation, connecting to avoid errors`);
+          // Connect to a safe page first to establish debugger connection
+          await agent.connectNewTabWithUrl('data:text/html,<html><body></body></html>');
           // Then navigate to the target URL in the same tab using goto()
           await agent.page.goto(openNewTabWithUrl);
-          console.log(`✅ [MidsceneManager] Navigated to ${openNewTabWithUrl} after opening blank tab`);
+          console.log(`✅ [MidsceneManager] Navigated to ${openNewTabWithUrl} after opening safe context`);
         } else {
           // Normal flow: open new tab with URL
           await agent.connectNewTabWithUrl(openNewTabWithUrl);
